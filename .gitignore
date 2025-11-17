@@ -1,0 +1,50 @@
+# Build directories
+build/
+**/build/
+
+# Python virtual environment
+.venv/
+venv/
+*.pyc
+__pycache__/
+
+# West/Zephyr SDK directories (managed by west, not version controlled)
+zephyr/
+nrf/
+nrfxlib/
+modules/
+bootloader/
+test/
+tools/
+
+# West cache
+.west/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.cache/
+
+# Agent and debug files
+*.jsonl
+agent-*.jsonl
+
+# Build artifacts
+*.o
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.su
+
+# Configuration with secrets (template provided instead)
+app/prj.conf
+
+# Temporary files
+*.log
+*.tmp

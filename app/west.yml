@@ -1,0 +1,13 @@
+manifest:
+  self:
+    path: mds-over-hid
+
+  remotes:
+    - name: ncs
+      url-base: https://github.com/nrfconnect
+
+  projects:
+    - name: nrf
+      remote: ncs
+      revision: v3.1.1
+      import: true
