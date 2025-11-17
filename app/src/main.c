@@ -21,11 +21,9 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
-#ifdef CONFIG_MEMFAULT
 #include <memfault/config.h>
 #include <memfault/core/platform/device_info.h>
 #include <memfault/core/data_packetizer.h>
-#endif
 
 static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 
@@ -132,15 +130,10 @@ static struct mds_state mds = {
 };
 
 /* Memfault configuration strings */
-#ifdef CONFIG_MEMFAULT
 #define MDS_URI_BASE \
 	MEMFAULT_HTTP_APIS_DEFAULT_SCHEME "://" MEMFAULT_HTTP_CHUNKS_API_HOST "/api/v0/chunks/"
 
 #define MDS_AUTH_KEY "Memfault-Project-Key: " CONFIG_MEMFAULT_NCS_PROJECT_KEY
-#else
-#define MDS_URI_BASE "https://chunks.memfault.com/api/v0/chunks/"
-#define MDS_AUTH_KEY "Memfault-Project-Key: YOUR_PROJECT_KEY_HERE"
-#endif
 
 static void mds_iface_ready(const struct device *dev, const bool ready)
 {
@@ -178,24 +171,15 @@ static int mds_get_report(const struct device *dev,
 	}
 
 	case MDS_REPORT_ID_DEVICE_IDENTIFIER: {
-#ifdef CONFIG_MEMFAULT
 		sMemfaultDeviceInfo info;
 		memfault_platform_get_device_info(&info);
 		size_t device_id_len = strlen(info.device_serial);
 		size_t copy_len = (device_id_len < (len - 1)) ? device_id_len : (len - 1);
 		memcpy(&buf[1], info.device_serial, copy_len);  /* Data starts at buf[1] */
 		return copy_len + 1;  /* payload + 1 for Report ID */
-#else
-		const char *device_id = "DEVICE_SERIAL_NOT_CONFIGURED";
-		size_t device_id_len = strlen(device_id);
-		size_t copy_len = (device_id_len < (len - 1)) ? device_id_len : (len - 1);
-		memcpy(&buf[1], device_id, copy_len);
-		return copy_len + 1;  /* payload + 1 for Report ID */
-#endif
 	}
 
 	case MDS_REPORT_ID_DATA_URI: {
-#ifdef CONFIG_MEMFAULT
 		sMemfaultDeviceInfo info;
 		memfault_platform_get_device_info(&info);
 
@@ -215,13 +199,6 @@ static int mds_get_report(const struct device *dev,
 		size_t copy_len = (uri_len < (len - 1)) ? uri_len : (len - 1);
 		memcpy(&buf[1], uri, copy_len);  /* Data starts at buf[1] */
 		return copy_len + 1;  /* payload + 1 for Report ID */
-#else
-		const char *uri = MDS_URI_BASE "DEVICE_SERIAL_NOT_CONFIGURED";
-		size_t uri_len = strlen(uri);
-		size_t copy_len = (uri_len < (len - 1)) ? uri_len : (len - 1);
-		memcpy(&buf[1], uri, copy_len);
-		return copy_len + 1;  /* payload + 1 for Report ID */
-#endif
 	}
 
 	case MDS_REPORT_ID_AUTHORIZATION: {
@@ -295,7 +272,6 @@ struct hid_device_ops mds_ops = {
 /* Send MDS stream data chunk */
 static int mds_send_chunk(const struct device *hid_dev)
 {
-#ifdef CONFIG_MEMFAULT
 	uint8_t report[65];  /* Report ID (1) + sequence (1) + data (63) */
 	size_t chunk_max_size = MDS_MAX_CHUNK_DATA_LEN;  /* 63 */
 	size_t chunk_size = chunk_max_size;
@@ -333,36 +309,6 @@ static int mds_send_chunk(const struct device *hid_dev)
 	mds.chunk_number = (mds.chunk_number + 1) & MDS_SEQUENCE_MASK;
 
 	return chunk_size;
-#else
-	/* No Memfault support - send dummy data for testing */
-	uint8_t report[65];  /* Report ID (1) + sequence (1) + data (63) */
-	const char *test_data = "TEST_DATA";
-	size_t test_len = strlen(test_data);
-
-	/* Set Report ID */
-	report[0] = MDS_REPORT_ID_STREAM_DATA;  /* 0x06 */
-
-	/* Sequence number (now byte 1) */
-	report[1] = mds.chunk_number & MDS_SEQUENCE_MASK;
-
-	/* Copy test data (now starting at byte 2) */
-	memcpy(&report[2], test_data, test_len);
-
-	/* Pad to 64 bytes total (excluding Report ID) */
-	memset(&report[test_len + 2], 0, 63 - test_len);
-
-	/* Submit 65 bytes: 1 (Report ID) + 1 (sequence) + 63 (data) */
-	int ret = hid_device_submit_report(hid_dev, 65, report);
-	if (ret) {
-		LOG_ERR("Failed to send test chunk, err %d", ret);
-		return ret;
-	}
-
-	LOG_DBG("Sent test chunk %d", mds.chunk_number);
-	mds.chunk_number = (mds.chunk_number + 1) & MDS_SEQUENCE_MASK;
-
-	return test_len;
-#endif
 }
 
 int main(void)
