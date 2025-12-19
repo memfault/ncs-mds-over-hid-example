@@ -11,6 +11,11 @@
 #include <zephyr/usb/usbd.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/random/random.h>
+#include <zephyr/settings/settings.h>
+
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
+#include <bluetooth/services/mds.h>
 
 #include <memfault/components.h>
 
@@ -24,6 +29,20 @@ static const struct gpio_dt_spec button1 = GPIO_DT_SPEC_GET(DT_ALIAS(sw1), gpios
 static const struct gpio_dt_spec button2 = GPIO_DT_SPEC_GET(DT_ALIAS(sw2), gpios);
 static const struct gpio_dt_spec button3 = GPIO_DT_SPEC_GET(DT_ALIAS(sw3), gpios);
 static struct gpio_callback button_cb_data;
+
+/* BLE state */
+static struct bt_conn *mds_conn;
+static struct k_work_delayable adv_work;
+
+/* BLE advertising data */
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_MDS_VAL),
+};
+
+static const struct bt_data sd[] = {
+	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
+};
 
 /*
  * Demo fault functions - these function names will appear in Memfault traces
@@ -112,6 +131,101 @@ static void button_pressed(const struct device *dev, struct gpio_callback *cb, u
 	}
 }
 
+/* BLE advertising work handler */
+static void adv_work_handler(struct k_work *work)
+{
+	int err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+
+	if (err == -EALREADY) {
+		/* Already advertising, ignore */
+		return;
+	}
+
+	if (err) {
+		LOG_WRN("Advertising failed (err %d), retrying...", err);
+		k_work_schedule(&adv_work, K_MSEC(100));
+		return;
+	}
+
+	LOG_INF("BLE advertising started");
+}
+
+static void advertising_start(void)
+{
+	k_work_schedule(&adv_work, K_NO_WAIT);
+}
+
+/* BLE connection callbacks */
+static void connected(struct bt_conn *conn, uint8_t conn_err)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	if (conn_err) {
+		LOG_ERR("BLE connection failed (err 0x%02x)", conn_err);
+		return;
+	}
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	LOG_INF("BLE connected: %s", addr);
+
+	/* Grant MDS access on connection (first client wins) */
+	if (!mds_conn) {
+		mds_conn = conn;
+		LOG_INF("MDS client connected via BLE (preferred transport)");
+	}
+}
+
+static void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	LOG_INF("BLE disconnected (reason 0x%02x)", reason);
+
+	if (conn == mds_conn) {
+		mds_conn = NULL;
+		LOG_INF("MDS client disconnected, falling back to USB HID");
+	}
+}
+
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+			     enum bt_security_err err)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	if (!err) {
+		LOG_INF("Security changed: %s level %u", addr, level);
+	} else {
+		LOG_WRN("Security failed: %s level %u err %d", addr, level, err);
+	}
+}
+
+static void recycled_cb(void)
+{
+	LOG_DBG("Connection object recycled, restarting advertising");
+	advertising_start();
+}
+
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+	.connected = connected,
+	.disconnected = disconnected,
+	.security_changed = security_changed,
+	.recycled = recycled_cb,
+};
+
+/* MDS access callback - controls which connections can use MDS */
+static bool mds_access_enable(struct bt_conn *conn)
+{
+	if (mds_conn && (conn == mds_conn)) {
+		return true;
+	}
+
+	return false;
+}
+
+static const struct bt_mds_cb mds_cb = {
+	.access_enable = mds_access_enable,
+};
+
 int main(void)
 {
 	struct usbd_context *sample_usbd;
@@ -164,6 +278,32 @@ int main(void)
 	LOG_INF("  BTN2: ble_connection_state_handler (assert)");
 	LOG_INF("  BTN3: flash_storage_write_operation (hard fault)");
 
+	/* Initialize BLE MDS service */
+	ret = bt_mds_cb_register(&mds_cb);
+	if (ret) {
+		LOG_ERR("MDS callback registration failed (err %d)", ret);
+		return ret;
+	}
+
+	ret = bt_enable(NULL);
+	if (ret) {
+		LOG_ERR("Bluetooth init failed (err %d)", ret);
+		return ret;
+	}
+
+	LOG_INF("Bluetooth initialized");
+
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		ret = settings_load();
+		if (ret) {
+			LOG_ERR("Settings load failed (err %d)", ret);
+			return ret;
+		}
+	}
+
+	k_work_init_delayable(&adv_work, adv_work_handler);
+	advertising_start();
+
 	/* Get HID device */
 	hid_dev = DEVICE_DT_GET_ONE(zephyr_hid_device);
 	if (!device_is_ready(hid_dev)) {
@@ -192,9 +332,19 @@ int main(void)
 	}
 
 	LOG_INF("MDS over HID device enabled");
+	LOG_INF("BLE MDS is preferred transport, USB HID is fallback");
 
 	/* Main loop: Send diagnostic chunks when streaming is enabled */
 	while (true) {
+		/* BLE is preferred transport - when connected, MDS service
+		 * handles data streaming via its internal workqueue */
+		if (mds_conn != NULL) {
+			/* BLE MDS client connected, skip HID streaming */
+			k_sleep(K_MSEC(100));
+			continue;
+		}
+
+		/* Fall back to USB HID when no BLE MDS client */
 		if (!mds_hid_is_ready()) {
 			LOG_DBG("USB HID device is not ready");
 			k_sleep(K_MSEC(1000));
