@@ -134,7 +134,7 @@ static void button_pressed(const struct device *dev, struct gpio_callback *cb, u
 /* BLE advertising work handler */
 static void adv_work_handler(struct k_work *work)
 {
-	int err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	int err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 
 	if (err == -EALREADY) {
 		/* Already advertising, ignore */
