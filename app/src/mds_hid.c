@@ -128,6 +128,13 @@ static void mds_iface_ready(const struct device *dev, const bool ready)
 	LOG_INF("HID device %s interface is %s",
 		dev->name, ready ? "ready" : "not ready");
 	mds.hid_ready = ready;
+
+	/* Reset streaming state on USB disconnect - gateway must re-enable */
+	if (!ready) {
+		mds.streaming_enabled = false;
+		mds.chunk_number = 0;
+		LOG_INF("Streaming state reset");
+	}
 }
 
 static int mds_get_report(const struct device *dev,
@@ -304,7 +311,7 @@ int mds_hid_send_chunk(const struct device *hid_dev)
 	}
 
 	/* Debug: Log the full report header and first 16 bytes of payload */
-	LOG_INF("TX [%d]: %02X %02X %02X | %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+	LOG_DBG("TX [%d]: %02X %02X %02X | %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
 		(int)chunk_size,
 		report[0], report[1], report[2],  /* Report ID, Seq, Len */
 		report[3], report[4], report[5], report[6], report[7], report[8], report[9], report[10],
@@ -330,7 +337,7 @@ int mds_hid_send_chunk(const struct device *hid_dev)
 		return ret;
 	}
 
-	LOG_INF("Sent chunk #%d, size %zu bytes", mds.chunk_number, chunk_size);
+	LOG_DBG("Sent chunk #%d, size %zu bytes", mds.chunk_number, chunk_size);
 
 	/* Update chunk number (wraps at 31) */
 	mds.chunk_number = (mds.chunk_number + 1) & MDS_SEQUENCE_MASK;
