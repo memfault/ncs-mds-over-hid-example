@@ -194,6 +194,8 @@ int main(void)
 	LOG_INF("MDS over HID device enabled");
 
 	/* Main loop: Send diagnostic chunks when streaming is enabled */
+	int chunks_sent = 0;
+
 	while (true) {
 		if (!mds_hid_is_ready()) {
 			LOG_DBG("USB HID device is not ready");
@@ -210,12 +212,17 @@ int main(void)
 		/* Try to send a chunk */
 		ret = mds_hid_send_chunk(hid_dev);
 		if (ret > 0) {
+			chunks_sent++;
 			/* Chunk sent successfully, toggle LED */
 			(void)gpio_pin_toggle(led0.port, led0.pin);
 			/* Small delay between chunks */
 			k_sleep(K_MSEC(10));
 		} else if (ret == 0) {
-			/* No data available, check again later */
+			/* No data available */
+			if (chunks_sent > 0) {
+				LOG_INF("Sent %d chunks", chunks_sent);
+				chunks_sent = 0;
+			}
 			k_sleep(K_MSEC(100));
 		} else {
 			/* Error sending chunk */
