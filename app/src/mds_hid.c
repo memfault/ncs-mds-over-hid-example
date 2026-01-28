@@ -114,7 +114,7 @@ struct mds_state {
 static struct mds_state mds = {
 	.hid_ready = false,
 	.streaming_enabled = false,
-	.chunk_number = 1,  /* Start at 1 to match gateway expectation */
+	.chunk_number = 0,
 };
 
 /* Memfault configuration strings */
@@ -228,7 +228,7 @@ static int mds_set_report(const struct device *dev,
 				k_msleep(50);
 			} else if (mode == MDS_STREAM_MODE_DISABLED) {
 				mds.streaming_enabled = false;
-				mds.chunk_number = 1;  /* Reset to 1 to match initial value */
+				mds.chunk_number = 0;
 			} else {
 				LOG_WRN("Invalid stream mode %u", mode);
 				return -EINVAL;
