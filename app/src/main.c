@@ -212,8 +212,8 @@ int main(void)
 		if (ret > 0) {
 			/* Chunk sent successfully, toggle LED */
 			(void)gpio_pin_toggle(led0.port, led0.pin);
-			/* Delay between chunks - gateway needs time for HTTP upload */
-			k_sleep(K_MSEC(100));
+			/* Small delay between chunks */
+			k_sleep(K_MSEC(10));
 		} else if (ret == 0) {
 			/* No data available, check again later */
 			k_sleep(K_MSEC(100));
